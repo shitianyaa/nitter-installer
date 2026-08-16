@@ -18,7 +18,7 @@ INSTALL_DIR="${HOME}/nitter"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 CONF_FILE="${INSTALL_DIR}/nitter.conf"
 SESSIONS_FILE="${INSTALL_DIR}/sessions.jsonl"
-SCRIPT_VERSION="3.1.0"
+SCRIPT_VERSION="3.2.0"
 
 IS_INSTALLING=0
 
@@ -98,21 +98,22 @@ check_or_install_docker() {
             exit 1
         fi
 
-        log_info "正在安装 Docker..."
+        log_info "正在下载并安装 Docker 官方环境，通常需要 1~2 分钟，请稍候..."
         curl -fsSL https://get.docker.com | bash
         systemctl enable --now docker || true
-        log_success "Docker 安装完成"
+        log_success "Docker 安装完成！"
     fi
 
     local compose_cmd
     compose_cmd="$(detect_compose_cmd)"
     if [ -z "$compose_cmd" ]; then
-        log_warn "正在补充安装 Docker Compose 插件..."
+        log_info "正在补充安装 Docker Compose 插件，请稍候..."
         if command -v apt-get &>/dev/null; then
             apt-get update && apt-get install -y docker-compose-plugin
         elif command -v yum &>/dev/null; then
             yum install -y docker-compose-plugin
         fi
+        log_success "Docker Compose 插件安装完成！"
     fi
 }
 
@@ -140,7 +141,7 @@ auto_configure_nginx() {
         local install_ngx="y"
         prompt_input "是否由脚本自动安装 Nginx 并配置 80 端口域名反代？[Y/n]" "Y" install_ngx
         if [[ "$install_ngx" =~ ^[Yy]$ ]]; then
-            log_info "正在安装 Nginx..."
+            log_info "正在调用系统包管理器安装 Nginx，请稍候..."
             if command -v apt-get &>/dev/null; then
                 apt-get update && apt-get install -y nginx
             elif command -v yum &>/dev/null; then
@@ -149,6 +150,7 @@ auto_configure_nginx() {
                 dnf install -y nginx
             fi
             systemctl enable --now nginx || true
+            log_success "Nginx 安装成功！"
         else
             log_info "已跳过 Nginx 安装。后续可使用 Cloudflare Tunnel 或 Origin Rules 映射至 ${port} 端口。"
             return 0
@@ -157,6 +159,7 @@ auto_configure_nginx() {
 
     # 如果有 Nginx，则写入配置
     if command -v nginx &>/dev/null; then
+        log_info "正在为域名 ${domain} 生成 Nginx 反向代理配置..."
         mkdir -p /etc/nginx/conf.d
         local target_conf
         target_conf="$(get_nginx_target_conf_path)"
@@ -177,9 +180,10 @@ server {
     }
 }
 EOF
+        log_info "正在验证 Nginx 配置文件并重载服务..."
         if nginx -t &>/dev/null; then
             systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
-            log_success "Nginx 反向代理配置成功，已自动重载服务！"
+            log_success "Nginx 反向代理配置成功，服务已重载生效！"
         else
             log_warn "Nginx 配置测试未完全通过，请检查 /etc/nginx 配置。"
         fi
@@ -190,10 +194,11 @@ cleanup_nginx_conf() {
     local target_conf
     target_conf="$(get_nginx_target_conf_path)"
     if [ -f "$target_conf" ]; then
+        log_info "正在清理 Nginx 反向代理配置文件..."
         rm -f "$target_conf"
         rm -f /etc/nginx/conf.d/nitter.conf /etc/nginx/sites-enabled/nitter.conf 2>/dev/null || true
         nginx -t &>/dev/null && (systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true)
-        log_info "已清理 Nginx 反向代理配置文件。"
+        log_success "Nginx 反向代理配置已清理并重载。"
     fi
 }
 
@@ -402,9 +407,10 @@ install_wizard() {
     log_info "正在生成配置文件..."
     render_configs "$domain" "$port" "$proxy_url" "$docker_image"
 
-    log_info "正在启动容器服务..."
+    log_info "正在拉取 Docker Hub 官方镜像并启动容器 (视网络情况需数秒至数十秒)..."
     cd "$INSTALL_DIR"
     $compose_cmd pull && $compose_cmd up -d
+    log_success "Docker 容器已成功创建并启动！"
 
     # 自动配置 Nginx (如果填写了域名)
     if [ "$domain" != "localhost" ]; then
@@ -412,7 +418,7 @@ install_wizard() {
     fi
 
     IS_INSTALLING=0
-    log_success "Nitter 服务已成功启动！"
+    log_success "Nitter 服务已全面就绪！"
 
     echo ""
     show_access_info "$domain" "$port"
@@ -485,7 +491,9 @@ modify_domain() {
         local compose_cmd
         compose_cmd="$(detect_compose_cmd)"
         if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
+            log_info "正在更新域名配置并重启 Nitter 容器，请稍候..."
             cd "$INSTALL_DIR" && $compose_cmd restart nitter 2>/dev/null || true
+            log_success "Nitter 容器重启完成！"
         fi
 
         if [ "$new_domain" != "localhost" ]; then
@@ -494,7 +502,7 @@ modify_domain() {
             cleanup_nginx_conf
         fi
 
-        log_success "配置已更新并已生效！"
+        log_success "访问模式与域名已更新生效！"
         echo ""
         show_access_info "$new_domain" "$current_port"
     fi
@@ -512,17 +520,18 @@ run_health_check() {
     local compose_cmd
     compose_cmd="$(detect_compose_cmd)"
 
-    log_info "1. 容器运行状态:"
+    log_info "1. 检查容器运行状态..."
     cd "$INSTALL_DIR" && $compose_cmd ps
 
     echo ""
-    log_info "2. 本地端口响应 (http://127.0.0.1:${port}):"
+    log_info "2. 测试本地 HTTP 端口响应 (http://127.0.0.1:${port})..."
     local http_code
     http_code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://127.0.0.1:${port}" 2>/dev/null || echo "000")"
     [ "$http_code" == "200" ] && log_success "本地 Web 服务正常 (HTTP 200)" || log_warn "本地响应码: ${http_code}"
 
     echo ""
     log_info "3. 测试推特 RSS 抓取与 Token 连通性:"
+    log_info "   正在向推特官方接口请求实时推文数据 (最长等待 10 秒)，请稍候..."
     local rss_sample
     rss_sample="$(curl -sL --max-time 10 "http://127.0.0.1:${port}/elonmusk/rss" 2>/dev/null || echo "")"
     if echo "$rss_sample" | grep -q "<rss"; then
@@ -578,8 +587,10 @@ manage_credentials_menu() {
                 local compose_cmd
                 compose_cmd="$(detect_compose_cmd)"
                 if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
+                    echo ""
+                    log_info "正在重启 Nitter 容器以加载最新小号池，请稍候..."
                     cd "$INSTALL_DIR" && $compose_cmd restart nitter 2>/dev/null || true
-                    log_success "Nitter 容器已重启以应用新凭证。"
+                    log_success "Nitter 容器重启完成，最新凭证已成功加载！"
                 fi
                 read -rp "按回车键继续..."
                 ;;
@@ -604,8 +615,9 @@ manage_credentials_menu() {
                         local compose_cmd
                         compose_cmd="$(detect_compose_cmd)"
                         if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
+                            log_info "正在重启 Nitter 容器以应用更改，请稍候..."
                             cd "$INSTALL_DIR" && $compose_cmd restart nitter 2>/dev/null || true
-                            log_success "Nitter 容器已重启生效。"
+                            log_success "Nitter 容器重启完成，最新账号池已生效！"
                         fi
                     else
                         log_info "已取消删除。"
@@ -621,7 +633,9 @@ manage_credentials_menu() {
                     local compose_cmd
                     compose_cmd="$(detect_compose_cmd)"
                     if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
+                        log_info "正在重启 Nitter 容器，请稍候..."
                         cd "$INSTALL_DIR" && $compose_cmd restart nitter 2>/dev/null || true
+                        log_success "Nitter 容器重启完成！"
                     fi
                 fi
                 read -rp "按回车键继续..."
@@ -641,14 +655,18 @@ uninstall_nitter() {
 
     local compose_cmd
     compose_cmd="$(detect_compose_cmd)"
-    [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ] && { cd "$INSTALL_DIR" && $compose_cmd down -v || true; }
+    if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
+        log_info "正在停止并销毁容器实例及虚拟网络，请稍候..."
+        cd "$INSTALL_DIR" && $compose_cmd down -v || true
+        log_success "容器及虚拟网络已销毁。"
+    fi
 
     cleanup_nginx_conf
 
     read -rp "是否删除配置与凭证目录 [${INSTALL_DIR}]？[y/N]: " del_dir
-    [[ "$del_dir" =~ ^[Yy]$ ]] && { rm -rf "$INSTALL_DIR"; log_success "数据目录已删除。"; }
+    [[ "$del_dir" =~ ^[Yy]$ ]] && { rm -rf "$INSTALL_DIR"; log_success "数据目录已彻底删除。"; }
 
-    log_success "卸载完成！"
+    log_success "Nitter 卸载完成！"
     read -rp "按回车键返回..."
 }
 
@@ -690,9 +708,18 @@ main_menu() {
                 read -rp "选择: " sc
                 cd "$INSTALL_DIR"
                 case "$sc" in
-                    1) $compose_cmd up -d && log_success "已启动" ;;
-                    2) $compose_cmd restart && log_success "已重启" ;;
-                    3) $compose_cmd stop && log_success "已停止" ;;
+                    1)
+                        log_info "正在启动容器服务，请稍候..."
+                        $compose_cmd up -d && log_success "服务已启动！"
+                        ;;
+                    2)
+                        log_info "正在重启容器服务，请稍候..."
+                        $compose_cmd restart && log_success "服务已重启！"
+                        ;;
+                    3)
+                        log_info "正在停止容器服务，请稍候..."
+                        $compose_cmd stop && log_success "服务已停止！"
+                        ;;
                 esac
                 read -rp "按回车键继续..."
                 ;;
