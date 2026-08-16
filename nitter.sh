@@ -524,7 +524,7 @@ run_health_check() {
     echo ""
     log_info "3. 测试推特 RSS 抓取与 Token 连通性:"
     local rss_sample
-    rss_sample="$(curl -s --max-time 10 "http://127.0.0.1:${port}/Twitter/rss" 2>/dev/null || echo "")"
+    rss_sample="$(curl -sL --max-time 10 "http://127.0.0.1:${port}/elonmusk/rss" 2>/dev/null || echo "")"
     if echo "$rss_sample" | grep -q "<rss"; then
         log_success "推特数据抓取成功！推特与 Token 完全正常！"
     elif echo "$rss_sample" | grep -qi "rate limit"; then
