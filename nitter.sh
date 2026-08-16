@@ -379,8 +379,10 @@ modify_domain() {
         sed -i -E "s/^hostname = .*/hostname = \"${new_domain}\"/" "$CONF_FILE"
         local compose_cmd
         compose_cmd="$(detect_compose_cmd)"
-        cd "$INSTALL_DIR" && $compose_cmd restart nitter
-        log_success "域名已更新为 https://${new_domain} 并已重启生效！"
+        if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
+            cd "$INSTALL_DIR" && $compose_cmd restart nitter 2>/dev/null || true
+        fi
+        log_success "域名已更新为 https://${new_domain} 并已生效！"
     fi
     read -rp "按回车键返回..."
 }
@@ -459,8 +461,10 @@ manage_credentials_menu() {
                 interactive_add_account
                 local compose_cmd
                 compose_cmd="$(detect_compose_cmd)"
-                cd "$INSTALL_DIR" && $compose_cmd restart nitter
-                log_success "Nitter 容器已重启以应用新凭证。"
+                if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
+                    cd "$INSTALL_DIR" && $compose_cmd restart nitter 2>/dev/null || true
+                    log_success "Nitter 容器已重启以应用新凭证。"
+                fi
                 read -rp "按回车键继续..."
                 ;;
             3)
