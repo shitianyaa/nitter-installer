@@ -18,7 +18,7 @@ INSTALL_DIR="${HOME}/nitter"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 CONF_FILE="${INSTALL_DIR}/nitter.conf"
 SESSIONS_FILE="${INSTALL_DIR}/sessions.jsonl"
-SCRIPT_VERSION="3.2.0"
+SCRIPT_VERSION="3.3.0"
 
 IS_INSTALLING=0
 
@@ -455,15 +455,24 @@ show_access_info() {
         echo -e "------------------------------------------------------------------"
         echo -e "${BOLD}【Cloudflare 设置最后两步】:${NC}"
         echo -e " 1. ${BOLD}DNS 记录 (Cloudflare -> DNS -> 记录)${NC}:"
-        echo -e "    添加一条 A 记录，名称填 ${CYAN}${domain%%.*}${NC}，内容填 ${CYAN}${host_ip}${NC}，开启小黄云 (Proxied)"
+        echo -e "    添加 A 记录: 名称填 ${CYAN}${domain%%.*}${NC} | IP 填 ${CYAN}${host_ip}${NC} | 代理状态: 开启 (小黄云)"
         echo -e " 2. ${BOLD}SSL 模式 (Cloudflare -> SSL/TLS -> 概述 Overview)${NC}:"
         echo -e "    将加密模式选择为: ${BOLD}【灵活 (Flexible)】${NC}"
+        echo -e "------------------------------------------------------------------"
+        echo -e "${BOLD}【🔒 防滥用与安全建议】:${NC}"
+        echo -e " • 本机 8080 端口已由 Nginx 内部接管，云服务器安全组无需对外开放 8080 端口。"
+        echo -e " • 建议在 Cloudflare -> 安全性 -> 安全规则 (自定义规则) 中添加 IP 白名单:"
+        echo -e "   条件: [主机名 等于 ${domain}] 且 [IP 源地址 不等于 你的IP] -> 阻止"
+        echo -e "   (限定主机名可避免误伤主站或其他二级域名；平时可用开关随时启停方便测试)"
     else
         echo -e " 🌐 网页访问地址: ${CYAN}http://${host_ip}:${port}${NC} (本地: http://127.0.0.1:${port})"
         echo -e " 📡 RSS 订阅地址: ${CYAN}http://${host_ip}:${port}/Twitter/rss${NC}"
         echo -e " 🤖 机器人插件对接: 直接在插件配置中填写 ${CYAN}http://${host_ip}:${port}${NC}"
         echo -e " 📁 安装目录:     ${INSTALL_DIR}"
-        echo -e " ⚠️  提示: 若公网 IP 无法打开，请检查云服务器后台安全组是否放行了 ${port} 端口！"
+        echo -e "------------------------------------------------------------------"
+        echo -e "${BOLD}【🔒 端口放行与安全建议】:${NC}"
+        echo -e " • 端口放行: 请在云服务器后台安全组放行 ${port} 端口入站规则。"
+        echo -e " • 防滥用建议: 建议在安全组将 ${port} 端口的「源 (Source)」设置为仅允许你自己电脑的 IP 或机器人服务器 IP，避免小号被外人刷取导致封号！"
     fi
     echo -e "${GREEN}==================================================================${NC}"
 }
