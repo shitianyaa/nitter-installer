@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Nitter 一键部署与管理脚本 (个人自用 / 机器人插件对接极简版)
-# 适用系统: Linux (Debian / Ubuntu / CentOS / Alpine 等)
+# 适用系统: Linux (Debian / Ubuntu / CentOS / Rocky / AlmaLinux / Alpine 等)
 # ==============================================================================
 
 # 终端样式
@@ -18,7 +18,7 @@ INSTALL_DIR="${HOME}/nitter"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 CONF_FILE="${INSTALL_DIR}/nitter.conf"
 SESSIONS_FILE="${INSTALL_DIR}/sessions.jsonl"
-SCRIPT_VERSION="3.0.0"
+SCRIPT_VERSION="3.1.0"
 
 IS_INSTALLING=0
 
@@ -116,6 +116,88 @@ check_or_install_docker() {
     fi
 }
 
+# ----------------- Nginx 自动反代与配置管理 -----------------
+get_nginx_target_conf_path() {
+    if [ -d "/etc/nginx/conf.d" ]; then
+        echo "/etc/nginx/conf.d/nitter.conf"
+    elif [ -d "/etc/nginx/sites-enabled" ]; then
+        echo "/etc/nginx/sites-enabled/nitter.conf"
+    else
+        echo "/etc/nginx/conf.d/nitter.conf"
+    fi
+}
+
+auto_configure_nginx() {
+    local domain="$1"
+    local port="$2"
+
+    [ "$domain" == "localhost" ] && return 0
+
+    # 检查是否安装 Nginx
+    if ! command -v nginx &>/dev/null; then
+        echo ""
+        log_info "检测到未安装 Nginx。"
+        local install_ngx="y"
+        prompt_input "是否由脚本自动安装 Nginx 并配置 80 端口域名反代？[Y/n]" "Y" install_ngx
+        if [[ "$install_ngx" =~ ^[Yy]$ ]]; then
+            log_info "正在安装 Nginx..."
+            if command -v apt-get &>/dev/null; then
+                apt-get update && apt-get install -y nginx
+            elif command -v yum &>/dev/null; then
+                yum install -y nginx
+            elif command -v dnf &>/dev/null; then
+                dnf install -y nginx
+            fi
+            systemctl enable --now nginx || true
+        else
+            log_info "已跳过 Nginx 安装。后续可使用 Cloudflare Tunnel 或 Origin Rules 映射至 ${port} 端口。"
+            return 0
+        fi
+    fi
+
+    # 如果有 Nginx，则写入配置
+    if command -v nginx &>/dev/null; then
+        mkdir -p /etc/nginx/conf.d
+        local target_conf
+        target_conf="$(get_nginx_target_conf_path)"
+
+        cat << EOF > "$target_conf"
+server {
+    listen 80;
+    server_name ${domain};
+
+    location / {
+        proxy_pass http://127.0.0.1:${port};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+    }
+}
+EOF
+        if nginx -t &>/dev/null; then
+            systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
+            log_success "Nginx 反向代理配置成功，已自动重载服务！"
+        else
+            log_warn "Nginx 配置测试未完全通过，请检查 /etc/nginx 配置。"
+        fi
+    fi
+}
+
+cleanup_nginx_conf() {
+    local target_conf
+    target_conf="$(get_nginx_target_conf_path)"
+    if [ -f "$target_conf" ]; then
+        rm -f "$target_conf"
+        rm -f /etc/nginx/conf.d/nitter.conf /etc/nginx/sites-enabled/nitter.conf 2>/dev/null || true
+        nginx -t &>/dev/null && (systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true)
+        log_info "已清理 Nginx 反向代理配置文件。"
+    fi
+}
+
+# ----------------- 数据清洗与 Token 处理 -----------------
 sanitize_token() {
     local input="$1"
     input="${input#\"}"
@@ -137,7 +219,7 @@ generate_random_hmac() {
 
 interactive_add_account() {
     echo -e "${CYAN}------------------------------------------------------------------${NC}"
-    echo -e "${BOLD}Twitter 小号凭证录入 (用于突破推特免登录抓取限制):${NC}"
+    echo -e "${BOLD}Twitter 小号凭证录入指引 (用于突破推特免登录抓取限制):${NC}"
     echo -e " 1. 电脑浏览器打开 https://x.com 并登录推特小号 (勿用主力大号)"
     echo -e " 2. 按 F12 -> 进入 Application/Storage -> 左侧 Cookies -> https://x.com"
     echo -e " 3. 复制两项值: ${GREEN}auth_token${NC} 与 ${GREEN}ct0${NC}"
@@ -172,7 +254,6 @@ render_configs() {
     local hmac_key
     hmac_key="$(generate_random_hmac)"
 
-    # 如果填写的不是 localhost 并且带有域名后缀，则开启 https 适配
     if [ "$domain" != "localhost" ]; then
         is_https="true"
     fi
@@ -280,7 +361,7 @@ install_wizard() {
     local domain=""
     echo ""
     echo -e "${BOLD}【2. 访问域名 (可选)】${NC}"
-    echo -e "个人自用直接通过 IP 访问请直接按回车保持默认 (localhost):"
+    echo -e "个人自用直接通过 IP 访问请直接按回车 (localhost)；若需绑定 Cloudflare 域名请输入 (如 nitter.abc.com):"
     prompt_input "绑定域名" "localhost" domain
 
     # 3. 代理设置 (可选)
@@ -301,7 +382,7 @@ install_wizard() {
     echo ""
     echo -e "${CYAN}======================== [部署配置确认] ========================${NC}"
     echo -e " 本地监听端口:    ${BOLD}${port}${NC}"
-    echo -e " 绑定域名/模式:   ${BOLD}${domain}${NC} (默认 IP 访问模式)"
+    echo -e " 绑定域名/模式:   ${BOLD}${domain}${NC}"
     echo -e " 基础 Docker 镜像: ${BOLD}${docker_image}${NC} (Docker Hub 官方源)"
     echo -e " 代理设置:        ${BOLD}${proxy_url:-无 (直连)}${NC}"
     local acc_count=0
@@ -323,6 +404,11 @@ install_wizard() {
     log_info "正在启动容器服务..."
     cd "$INSTALL_DIR"
     $compose_cmd pull && $compose_cmd up -d
+
+    # 自动配置 Nginx (如果填写了域名)
+    if [ "$domain" != "localhost" ]; then
+        auto_configure_nginx "$domain" "$port"
+    fi
 
     IS_INSTALLING=0
     log_success "Nitter 服务已成功启动！"
@@ -354,17 +440,24 @@ show_access_info() {
     host_ip="$(curl -s4 ifconfig.me 2>/dev/null || curl -s4 icanhazip.com 2>/dev/null || echo "你的服务器IP")"
 
     echo -e "${GREEN}==================================================================${NC}"
-    echo -e "${BOLD}Nitter 部署完成！${NC}"
+    echo -e "${BOLD}🎉 Nitter 部署完成！${NC}"
     if [ "$domain" != "localhost" ]; then
         echo -e " 🌐 域名访问地址: ${CYAN}https://${domain}${NC}"
         echo -e " 📡 RSS 订阅地址: ${CYAN}https://${domain}/Twitter/rss${NC}"
+        echo -e " 🤖 机器人插件对接: 直接在插件配置中填写 ${CYAN}https://${domain}${NC}"
+        echo -e "------------------------------------------------------------------"
+        echo -e "${BOLD}【Cloudflare 设置最后两步】:${NC}"
+        echo -e " 1. ${BOLD}DNS 记录 (Cloudflare -> DNS -> 记录)${NC}:"
+        echo -e "    添加一条 A 记录，名称填 ${CYAN}${domain%%.*}${NC}，内容填 ${CYAN}${host_ip}${NC}，开启小黄云 (Proxied)"
+        echo -e " 2. ${BOLD}SSL 模式 (Cloudflare -> SSL/TLS -> 概述 Overview)${NC}:"
+        echo -e "    将加密模式选择为: ${BOLD}【灵活 (Flexible)】${NC}"
     else
         echo -e " 🌐 网页访问地址: ${CYAN}http://${host_ip}:${port}${NC} (本地: http://127.0.0.1:${port})"
         echo -e " 📡 RSS 订阅地址: ${CYAN}http://${host_ip}:${port}/Twitter/rss${NC}"
         echo -e " 🤖 机器人插件对接: 直接在插件配置中填写 ${CYAN}http://${host_ip}:${port}${NC}"
+        echo -e " 📁 安装目录:     ${INSTALL_DIR}"
+        echo -e " ⚠️  提示: 若公网 IP 无法打开，请检查云服务器后台安全组是否放行了 ${port} 端口！"
     fi
-    echo -e " 📁 安装目录:     ${INSTALL_DIR}"
-    echo -e " ⚠️  提示: 若公网 IP 无法打开，请检查云服务器后台安全组是否放行了 ${port} 端口！"
     echo -e "${GREEN}==================================================================${NC}"
 }
 
@@ -375,6 +468,8 @@ modify_domain() {
     echo -e "${CYAN}==================================================================${NC}"
     local old_domain
     old_domain="$(get_current_domain)"
+    local current_port
+    current_port="$(get_current_port)"
     echo -e "当前配置: ${BOLD}${old_domain}${NC} (localhost 表示纯 IP 模式)\n"
 
     local new_domain=""
@@ -385,12 +480,22 @@ modify_domain() {
         [ "$new_domain" != "localhost" ] && is_https="true"
         sed -i -E "s/^hostname = .*/hostname = \"${new_domain}\"/" "$CONF_FILE"
         sed -i -E "s/^https = .*/https = ${is_https}/" "$CONF_FILE"
+
         local compose_cmd
         compose_cmd="$(detect_compose_cmd)"
         if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
             cd "$INSTALL_DIR" && $compose_cmd restart nitter 2>/dev/null || true
         fi
+
+        if [ "$new_domain" != "localhost" ]; then
+            auto_configure_nginx "$new_domain" "$current_port"
+        else
+            cleanup_nginx_conf
+        fi
+
         log_success "配置已更新并已生效！"
+        echo ""
+        show_access_info "$new_domain" "$current_port"
     fi
     read -rp "按回车键返回..."
 }
@@ -420,7 +525,7 @@ run_health_check() {
     local rss_sample
     rss_sample="$(curl -s --max-time 10 "http://127.0.0.1:${port}/Twitter/rss" 2>/dev/null || echo "")"
     if echo "$rss_sample" | grep -q "<rss"; then
-        log_success "推特数据抓取成功！"
+        log_success "推特数据抓取成功！推特与 Token 完全正常！"
     elif echo "$rss_sample" | grep -qi "rate limit"; then
         log_error "抓取失败: 触发推特 Rate Limit 限制，请在凭证管理中补充更多小号。"
     else
@@ -431,6 +536,7 @@ run_health_check() {
     read -rp "按回车键返回..."
 }
 
+# ----------------- 账号凭证管理 (查看 / 增加 / 删除单个 / 清空) -----------------
 manage_credentials_menu() {
     while true; do
         clear
@@ -439,24 +545,27 @@ manage_credentials_menu() {
         echo -e "${CYAN}==================================================================${NC}"
         echo -e "${BOLD}Twitter 小号凭证管理 (当前已存小号数: ${acc_count})${NC}"
         echo -e "${CYAN}==================================================================${NC}"
-        echo -e " 1. 查看已存凭证 (脱敏)"
-        echo -e " 2. 追加新小号凭证"
-        echo -e " 3. 清空所有凭证"
+        echo -e " 1. 查看已存凭证列表 (脱敏显示)"
+        echo -e " 2. 追加添加新推特小号"
+        echo -e " 3. 删除指定序号的小号"
+        echo -e " 4. 清空全部小号凭证"
         echo -e " 0. 返回主菜单"
         echo -e "${CYAN}==================================================================${NC}"
-        read -rp "请选择 [0-3]: " c_opt
+        read -rp "请选择 [0-4]: " c_opt
         case "$c_opt" in
             1)
                 echo ""
                 if [ "$acc_count" -eq 0 ]; then
-                    log_warn "暂无凭证。"
+                    log_warn "当前暂无配置任何小号凭证。"
                 else
+                    echo -e "${BOLD}序号 | auth_token (前6位+后4位) | ct0 (前8位...)${NC}"
+                    echo "------------------------------------------------------------"
                     local idx=1
                     while IFS= read -r line; do
                         local at ct
                         at="$(echo "$line" | sed -E 's/.*"auth_token": *"([^"]+)".*/\1/')"
                         ct="$(echo "$line" | sed -E 's/.*"ct0": *"([^"]+)".*/\1/')"
-                        echo " [$idx] auth_token: ${at:0:6}****${at: -4} | ct0: ${ct:0:8}****"
+                        echo " [$idx]  auth_token: ${at:0:6}****${at: -4} | ct0: ${ct:0:8}****"
                         idx=$((idx + 1))
                     done < "$SESSIONS_FILE"
                 fi
@@ -474,10 +583,45 @@ manage_credentials_menu() {
                 read -rp "按回车键继续..."
                 ;;
             3)
+                echo ""
+                if [ "$acc_count" -eq 0 ]; then
+                    log_warn "当前无凭证可删。"
+                else
+                    echo -e "${BOLD}当前小号列表:${NC}"
+                    local idx=1
+                    while IFS= read -r line; do
+                        local at ct
+                        at="$(echo "$line" | sed -E 's/.*"auth_token": *"([^"]+)".*/\1/')"
+                        echo " [$idx] auth_token: ${at:0:6}****${at: -4}"
+                        idx=$((idx + 1))
+                    done < "$SESSIONS_FILE"
+                    echo ""
+                    read -rp "请输入要删除的小号序号 (1-$acc_count, 输入 q 取消): " del_idx
+                    if [[ "$del_idx" =~ ^[0-9]+$ ]] && [ "$del_idx" -ge 1 ] && [ "$del_idx" -le "$acc_count" ]; then
+                        sed -i "${del_idx}d" "$SESSIONS_FILE"
+                        log_success "第 ${del_idx} 个小号凭证已删除！"
+                        local compose_cmd
+                        compose_cmd="$(detect_compose_cmd)"
+                        if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
+                            cd "$INSTALL_DIR" && $compose_cmd restart nitter 2>/dev/null || true
+                            log_success "Nitter 容器已重启生效。"
+                        fi
+                    else
+                        log_info "已取消删除。"
+                    fi
+                fi
+                read -rp "按回车键继续..."
+                ;;
+            4)
                 read -rp "确定清空全部凭证？[y/N]: " confirm_c
                 if [[ "$confirm_c" =~ ^[Yy]$ ]]; then
                     > "$SESSIONS_FILE"
-                    log_success "凭证已清空。"
+                    log_success "全部凭证已清空。"
+                    local compose_cmd
+                    compose_cmd="$(detect_compose_cmd)"
+                    if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
+                        cd "$INSTALL_DIR" && $compose_cmd restart nitter 2>/dev/null || true
+                    fi
                 fi
                 read -rp "按回车键继续..."
                 ;;
@@ -497,6 +641,8 @@ uninstall_nitter() {
     local compose_cmd
     compose_cmd="$(detect_compose_cmd)"
     [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ] && { cd "$INSTALL_DIR" && $compose_cmd down -v || true; }
+
+    cleanup_nginx_conf
 
     read -rp "是否删除配置与凭证目录 [${INSTALL_DIR}]？[y/N]: " del_dir
     [[ "$del_dir" =~ ^[Yy]$ ]] && { rm -rf "$INSTALL_DIR"; log_success "数据目录已删除。"; }
@@ -524,11 +670,11 @@ main_menu() {
         echo -e "${CYAN}==================================================================${NC}"
         echo -e " 1. 重新部署 / 覆盖安装 Nitter"
         echo -e " 2. 修改访问模式 / 绑定域名"
-        echo -e " 3. 管理 Twitter 小号凭证 (查看 / 追加 / 清空)"
-        echo -e " 4. 运行服务连通性自检"
-        echo -e " 5. 启动 / 重启 / 停止服务"
-        echo -e " 6. 实时查看运行日志"
-        echo -e " 7. 彻底卸载 Nitter"
+        echo -e " 3. 🔑 管理 Twitter 小号凭证 (查看 / 增 / 删 / 清空)"
+        echo -e " 4. 🩺 运行服务连通性自检"
+        echo -e " 5. ▶️ 启动 / 🔄 重启 / ⏹️ 停止服务"
+        echo -e " 6. 📋 实时查看运行日志"
+        echo -e " 7. 🗑️ 彻底卸载 Nitter"
         echo -e " 0. 退出"
         echo -e "${CYAN}==================================================================${NC}"
         read -rp "请选择编号 [0-7]: " choice

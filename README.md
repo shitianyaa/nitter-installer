@@ -1,6 +1,6 @@
 # Nitter 一键容器化部署脚本 (极简自用版)
 
-适用于 Linux 服务器的 Nitter 快速部署工具。默认采用 **IP + 端口** 模式，开箱即用，零配置、零 Nginx 依赖，非常适合个人使用或配合 QQ / Telegram 机器人插件（如 AstrBot）拉取推特 RSS。
+适用于 Linux 服务器的 Nitter 快速部署工具。默认采用 **IP + 端口** 模式（开箱即用、零配置、零 Nginx 依赖）；同时支持 **Cloudflare 域名全自动映射** 与 **推特小号完整增删查改**。非常适合个人自用或配合 QQ / Telegram 机器人插件（如 AstrBot）拉取推特 RSS。
 
 ---
 
@@ -28,7 +28,9 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 
 ### 2. 交互式输入 (一路按回车即可)
 - **服务端口**：默认 `8080` (直接回车)
-- **绑定域名**：个人自用直接按回车保持默认 (`localhost`) 即可通过公网 IP 访问；若需绑定 Cloudflare 域名请输入你的域名（如 `nitter.yourdomain.com`）
+- **绑定域名**：
+  - 个人自用直接按回车保持默认 (`localhost`) 即可通过公网 IP 访问；
+  - 若需绑定 Cloudflare 域名请输入你的域名（如 `nitter.yourdomain.com`），**脚本会自动为你配置好本机的 Nginx 反代并重载**。
 - **网络代理**：国内服务器需填 HTTP/SOCKS5 代理，海外服务器直接回车跳过
 - **Twitter 凭证**：直接粘贴小号的 `auth_token` 与 `ct0`，也可回车跳过后续再填
 
@@ -43,34 +45,35 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 
 ---
 
-## 常见问题排查与 Cloudflare 映射
+## Cloudflare 域名映射极简两步设置
 
-### 1. 公网 IP 无法打开
-检查云厂商控制台（腾讯云、阿里云、甲骨文、AWS 等）的**安全组 / 防火墙**，确保放行了 TCP `8080` 端口入站规则。
+若在脚本中填入了自定义域名，终端会打印专属配置卡片，仅需在 Cloudflare 勾选两步：
 
-### 2. 绑定 Cloudflare 域名后，打开显示「Welcome to nginx!」
-- **原因**：这是因为你的 VPS 安装了 Nginx，Cloudflare（灵活模式）将流量打到 VPS 的 80 端口时，被 Nginx 自带的默认欢迎页拦截了。
-- **一键解决命令**（在服务器终端执行以下一行命令，将默认欢迎页直接改为转发至 Nitter）：
-  ```bash
-  sed -i 's|try_files $uri $uri/ =404;|proxy_pass http://127.0.0.1:8080;|' /etc/nginx/sites-available/default && nginx -t && systemctl reload nginx
-  ```
-- **关于冲突与多站点的说明**：
-  - 这行命令修改的是系统的默认全局回落站点（`default_server`）。
-  - 如果这台服务器后续还需要部署其他独立域名的网站（如 `blog.com`），Nginx 会优先按照 `server_name` 精准匹配对应域名的规则，**不会产生域名冲突或命名覆盖**。
+1. **DNS 解析 (Cloudflare -> DNS -> 记录)**：
+   - 添加一条 `A` 记录：名称填你的二级域名前缀，内容填服务器公网 IP，开启小黄云（Proxied）。
+2. **SSL 加密模式 (Cloudflare -> SSL/TLS -> 概述 Overview)**：
+   - 将加密模式选择为 **【灵活 (Flexible)】**。
 
 ---
 
-## Twitter 小号凭证获取指引 (auth_token 与 ct0)
+## Twitter 小号凭证管理 (完整支持 增 / 删 / 查 / 清)
 
 自 2024 年起 Twitter 取消了免登录访客接口，自建 Nitter 必须填入推特小号凭证方可抓取推文：
 
-1. **登录小号**：电脑浏览器打开 `https://x.com` 登录推特临时小号（切勿用主力大号）。
-2. **打开控制台**：按 `F12` -> 切换到 **Application (应用)** 或 **Storage (存储)**。
-3. **定位 Cookie**：左侧展开 **Cookies** -> 点击 `https://x.com`。
-4. **复制两项关键值**：
+### 1. 如何获取 Cookie
+1. 电脑浏览器打开 `https://x.com` 登录推特临时小号（切勿用主力大号）。
+2. 按 `F12` -> 切换到 **Application (应用)** 或 **Storage (存储)**。
+3. 左侧展开 **Cookies** -> 点击 `https://x.com`。
+4. 复制两项关键值：
    - `auth_token`：约 40 位哈希字符。
    - `ct0`：较长的 CSRF 字符。
-5. **填入脚本**：可在安装时粘贴，或随时运行 `./nitter.sh` 选 `[3] 管理 Twitter 小号凭证` 进行追加。
+
+### 2. 管理面板凭证操作
+随时在服务器运行 `./nitter.sh` -> 选择 **`[3] 管理 Twitter 小号凭证`**：
+- **查看列表**：脱敏列出当前所有已录入的小号及序号。
+- **追加小号**：继续添加备用小号形成轮询池，自动重启容器生效。
+- **删除指定小号**：输入序号一键删除失效或封禁的小号，自动重启容器生效。
+- **清空凭证**：一键重置所有凭证数据。
 
 ---
 
@@ -85,11 +88,11 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 ==================================================================
  1. 重新部署 / 覆盖安装 Nitter
  2. 修改访问模式 / 绑定域名
- 3. 管理 Twitter 小号凭证 (查看 / 追加 / 清空)
- 4. 运行服务连通性自检
- 5. 启动 / 重启 / 停止服务
- 6. 实时查看运行日志
- 7. 彻底卸载 Nitter
+ 3. 🔑 管理 Twitter 小号凭证 (查看 / 增 / 删 / 清空)
+ 4. 🩺 运行服务连通性自检
+ 5. ▶️ 启动 / 🔄 重启 / ⏹️ 停止服务
+ 6. 📋 实时查看运行日志
+ 7. 🗑️ 彻底卸载 Nitter
  0. 退出
 ==================================================================
 ```
