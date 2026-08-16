@@ -78,6 +78,35 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 
 ---
 
+## 📁 部署后文件存储位置与目录结构
+
+运行脚本部署完成后，所有相关的配置文件与持久化数据将统一存放在当前用户的家目录下：
+
+### 1. 核心安装目录 (`~/nitter/`)
+> 路径：`/root/nitter/` 或 `/home/<你的用户名>/nitter/`
+
+```text
+~/nitter/
+├── nitter.conf          # Nitter 核心配置文件 (包含端口、绑定域名、HTTPS 开关、代理设置等)
+├── docker-compose.yml   # 容器编排文件 (定义了 Nitter 与 Redis 容器的启动参数与端口映射)
+├── sessions.jsonl       # Twitter 小号凭证池 (存放 auth_token 与 ct0 的 JSONL 文件)
+└── redis-data/          # Redis 缓存数据持久化目录 (缓存推特文章与图片索引)
+```
+
+### 2. 各文件作用与维护建议
+| 文件 / 目录 | 作用说明 | 维护建议 |
+| :--- | :--- | :--- |
+| **`nitter.conf`** | Nitter 服务主配置 | 可通过管理菜单 `[2]` 修改域名，或直接编辑后重启容器 |
+| **`sessions.jsonl`** | 推特小号 Token 池 | 建议直接在脚本菜单 `[3]` 中增删，格式已内置严格校验 |
+| **`docker-compose.yml`** | Docker 容器服务定义 | 包含容器自启与网络互联定义，一般无需手动修改 |
+| **`redis-data/`** | 缓存数据库存储 | 缓存过期自动轮替，无需人工干预 |
+
+### 3. 系统级反代配置 (仅当绑定了域名且使用 Nginx 时)
+- 配置文件路径：`/etc/nginx/conf.d/nitter.conf`（或 `/etc/nginx/sites-enabled/nitter.conf`）
+- 作用：将 `80` 端口对域名的访问精准反代转发至本地 Nitter 的 `8080` 端口。
+
+---
+
 ## 日常管理面板
 
 后续随时在服务器执行 `./nitter.sh` 即可打开控制面板：
@@ -97,3 +126,12 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
  0. 退出
 ==================================================================
 ```
+
+---
+
+## 🗑️ 关于彻底卸载（0 残留、无误删）
+
+在管理面板中选择 **`[7] 彻底卸载 Nitter`** 时：
+1. **停止并删除容器**：自动执行 `docker compose down -v`，删除 Nitter 容器、Redis 容器以及专属 Docker 网络。
+2. **清理 Nginx 反代配置**：精准删除 `/etc/nginx/.../nitter.conf` 并自动重载 Nginx，**绝对不会误删或影响服务器上现有的其他网站**。
+3. **清理数据目录**：精准删除专属的 `~/nitter` 目录，不会碰家目录下其他任何文件。
