@@ -60,13 +60,14 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 
 自 2024 年起 Twitter 取消了免登录访客接口，自建 Nitter 必须填入推特小号凭证方可抓取推文：
 
-### 1. 如何获取 Cookie
-1. 电脑浏览器打开 `https://x.com` 登录推特临时小号（切勿用主力大号）。
-2. 按 `F12` -> 切换到 **Application (应用)** 或 **Storage (存储)**。
-3. 左侧展开 **Cookies** -> 点击 `https://x.com`。
-4. 复制两项关键值：
+### 1. 如何获取 Cookie (重要操作技巧)
+1. **使用无痕模式**：打开浏览器的 **无痕窗口 / 隐身模式** (`Ctrl + Shift + N`)，访问 `https://x.com` 登录推特临时小号（切勿用主力大号）。
+2. **打开控制台**：按 `F12` -> 切换到 **Application (应用)** 或 **Storage (存储)**。
+3. **定位 Cookie**：左侧展开 **Cookies** -> 点击 `https://x.com`。
+4. **复制两项关键值**：
    - `auth_token`：约 40 位哈希字符。
    - `ct0`：较长的 CSRF 字符。
+5. **直接关闭无痕窗口**：复制完成后，**直接关掉无痕窗口即可，千万不要在网页上点击「Log Out / 退出登录」**！（主动退出登录会导致推特服务器立即注销该 Token 使其作废）。
 
 ### 2. 管理面板凭证操作
 随时在服务器运行 `./nitter.sh` -> 选择 **`[3] 管理 Twitter 小号凭证`**：

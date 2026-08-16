@@ -220,9 +220,10 @@ generate_random_hmac() {
 interactive_add_account() {
     echo -e "${CYAN}------------------------------------------------------------------${NC}"
     echo -e "${BOLD}Twitter 小号凭证录入指引 (用于突破推特免登录抓取限制):${NC}"
-    echo -e " 1. 电脑浏览器打开 https://x.com 并登录推特小号 (勿用主力大号)"
+    echo -e " 1. 建议使用浏览器【无痕窗口】打开 https://x.com 登录推特小号"
     echo -e " 2. 按 F12 -> 进入 Application/Storage -> 左侧 Cookies -> https://x.com"
     echo -e " 3. 复制两项值: ${GREEN}auth_token${NC} 与 ${GREEN}ct0${NC}"
+    echo -e " ⚠️  ${YELLOW}复制完后直接关闭无痕窗口即可，切勿点击网页上的「退出登录」！${NC}"
     echo -e "${CYAN}------------------------------------------------------------------${NC}"
 
     local auth_token=""
