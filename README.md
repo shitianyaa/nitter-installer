@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 
 ### 2. 交互式输入 (一路按回车即可)
 - **服务端口**：默认 `8080` (直接回车)
-- **绑定域名**：个人自用直接按回车保持默认 (`localhost`) 即可通过公网 IP 访问
+- **绑定域名**：个人自用直接按回车保持默认 (`localhost`) 即可通过公网 IP 访问；若需绑定 Cloudflare 域名请输入你的域名（如 `nitter.yourdomain.com`）
 - **网络代理**：国内服务器需填 HTTP/SOCKS5 代理，海外服务器直接回车跳过
 - **Twitter 凭证**：直接粘贴小号的 `auth_token` 与 `ct0`，也可回车跳过后续再填
 
@@ -37,11 +37,26 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 ## 访问与对接插件 (例如 AstrBot)
 
 部署完成后：
-- **Web 界面访问**：`http://<你的服务器IP>:8080`
+- **Web 界面访问**：`http://<你的服务器IP>:8080` (或 `https://你的域名`)
 - **RSS 订阅地址**：`http://<你的服务器IP>:8080/Twitter/rss`
-- **机器人插件对接**：在插件配置中的 Nitter 实例地址直接填写 `http://<你的服务器IP>:8080` 即可！
+- **机器人插件对接**：在插件配置中的 Nitter 实例地址直接填写 `http://<你的服务器IP>:8080` (或 `https://你的域名`) 即可！
 
-> ⚠️ **注意**：如果公网 IP 打不开，请检查云厂商控制台（如腾讯云、阿里云、甲骨文）的**安全组 / 防火墙**，确保放行了 TCP `8080` 端口入站规则。
+---
+
+## 常见问题排查与 Cloudflare 映射
+
+### 1. 公网 IP 无法打开
+检查云厂商控制台（腾讯云、阿里云、甲骨文、AWS 等）的**安全组 / 防火墙**，确保放行了 TCP `8080` 端口入站规则。
+
+### 2. 绑定 Cloudflare 域名后，打开显示「Welcome to nginx!」
+- **原因**：这是因为你的 VPS 安装了 Nginx，Cloudflare（灵活模式）将流量打到 VPS 的 80 端口时，被 Nginx 自带的默认欢迎页拦截了。
+- **一键解决命令**（在服务器终端执行以下一行命令，将默认欢迎页直接改为转发至 Nitter）：
+  ```bash
+  sed -i 's|try_files $uri $uri/ =404;|proxy_pass http://127.0.0.1:8080;|' /etc/nginx/sites-available/default && nginx -t && systemctl reload nginx
+  ```
+- **关于冲突与多站点的说明**：
+  - 这行命令修改的是系统的默认全局回落站点（`default_server`）。
+  - 如果这台服务器后续还需要部署其他独立域名的网站（如 `blog.com`），Nginx 会优先按照 `server_name` 精准匹配对应域名的规则，**不会产生域名冲突或命名覆盖**。
 
 ---
 
@@ -78,11 +93,3 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
  0. 退出
 ==================================================================
 ```
-
----
-
-## （可选）高级：绑定自定义域名
-
-若后续确实需要绑定域名：
-1. 运行 `./nitter.sh` -> 选择 `[2] 修改访问模式 / 绑定域名`，输入你的域名（如 `nitter.example.com`）。
-2. 配合 Cloudflare Zero Trust Tunnel、Nginx 或宝塔反代到 `http://127.0.0.1:8080` 即可。
