@@ -1,0 +1,10 @@
+# Runtime and local configs
+sessions.jsonl
+nitter.conf
+docker-compose.yml
+redis-data/
+*.log
+
+# System files
+.DS_Store
+Thumbs.db
