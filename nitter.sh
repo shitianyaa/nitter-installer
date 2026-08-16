@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Nitter 一键部署与管理脚本 (专为 Cloudflare 域名托管场景精简设计)
+# Nitter 一键部署与管理脚本 (个人自用 / 机器人插件对接极简版)
 # 适用系统: Linux (Debian / Ubuntu / CentOS / Alpine 等)
 # ==============================================================================
 
@@ -18,7 +18,7 @@ INSTALL_DIR="${HOME}/nitter"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 CONF_FILE="${INSTALL_DIR}/nitter.conf"
 SESSIONS_FILE="${INSTALL_DIR}/sessions.jsonl"
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="3.0.0"
 
 IS_INSTALLING=0
 
@@ -27,7 +27,6 @@ log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# 中断与取消处理
 cleanup_on_cancel() {
     echo ""
     log_warn "检测到中断信号 (Ctrl+C)"
@@ -136,10 +135,9 @@ generate_random_hmac() {
     fi
 }
 
-# 凭证录入
 interactive_add_account() {
     echo -e "${CYAN}------------------------------------------------------------------${NC}"
-    echo -e "${BOLD}获取 Twitter 小号凭证 (用于突破推特免登录抓取限制):${NC}"
+    echo -e "${BOLD}Twitter 小号凭证录入 (用于突破推特免登录抓取限制):${NC}"
     echo -e " 1. 电脑浏览器打开 https://x.com 并登录推特小号 (勿用主力大号)"
     echo -e " 2. 按 F12 -> 进入 Application/Storage -> 左侧 Cookies -> https://x.com"
     echo -e " 3. 复制两项值: ${GREEN}auth_token${NC} 与 ${GREEN}ct0${NC}"
@@ -157,7 +155,7 @@ interactive_add_account() {
     if [ -n "$auth_token" ] && [ -n "$ct0" ]; then
         mkdir -p "$INSTALL_DIR"
         touch "$SESSIONS_FILE"
-        echo "{\"auth_token\": \"${auth_token}\", \"ct0\": \"${ct0}\"}" >> "$SESSIONS_FILE"
+        echo "{\"kind\": \"cookie\", \"auth_token\": \"${auth_token}\", \"authToken\": \"${auth_token}\", \"ct0\": \"${ct0}\"}" >> "$SESSIONS_FILE"
         log_success "凭证已保存至: ${SESSIONS_FILE}"
 
         read -rp "是否继续添加下一个备用小号？[y/N]: " continue_add
@@ -165,14 +163,19 @@ interactive_add_account() {
     fi
 }
 
-# 写入配置 (专为 CF 域名 HTTPS 场景优化)
 render_configs() {
     local domain="$1"
     local port="$2"
     local proxy_url="$3"
     local docker_image="$4"
+    local is_https="false"
     local hmac_key
     hmac_key="$(generate_random_hmac)"
+
+    # 如果填写的不是 localhost 并且带有域名后缀，则开启 https 适配
+    if [ "$domain" != "localhost" ]; then
+        is_https="true"
+    fi
 
     mkdir -p "$INSTALL_DIR"
 
@@ -181,7 +184,7 @@ render_configs() {
 [Server]
 address = "0.0.0.0"
 port = 8080
-https = true
+https = ${is_https}
 httpReflectedXSS = "1; mode=block"
 httpContentTypeOptions = "nosniff"
 httpFrameOptions = "SAMEORIGIN"
@@ -249,13 +252,12 @@ EOF
     [ ! -f "$SESSIONS_FILE" ] && touch "$SESSIONS_FILE"
 }
 
-# 部署向导
 install_wizard() {
     clear
     echo -e "${CYAN}==================================================================${NC}"
-    echo -e "${BOLD}         Nitter 专版一键部署向导 (Cloudflare 域名映射定制版)        ${NC}"
+    echo -e "${BOLD}                 Nitter 一键容器化部署向导                        ${NC}"
     echo -e "${CYAN}==================================================================${NC}"
-    echo -e "说明: 本向导专为 Cloudflare 托管域名优化，输入 q 可随时退出。\n"
+    echo -e "提示: 个人自用直接一路按 ${BOLD}[回车]${NC} 即可，输入 ${RED}q${NC} 可随时退出。\n"
 
     IS_INSTALLING=1
     check_or_install_docker
@@ -268,30 +270,29 @@ install_wizard() {
     docker_image="$(detect_arch_image)"
     log_info "匹配系统架构镜像: ${CYAN}${docker_image}${NC}"
 
-    # 1. 域名设置
-    local cf_domain=""
-    echo ""
-    echo -e "${BOLD}【步骤 1】Cloudflare 域名配置${NC}"
-    echo -e "请输入你在 Cloudflare 上要映射给 Nitter 的域名 (例: nitter.yourdomain.com)"
-    prompt_input "绑定域名" "nitter.yourdomain.com" cf_domain
-
-    # 2. 本地端口
+    # 1. 端口 (默认 8080)
     local port=""
     echo ""
-    echo -e "${BOLD}【步骤 2】本地服务端口${NC}"
-    echo -e "Nitter 容器在服务器/本地监听的端口 (用于 CF Tunnel 转发或 Nginx 反代):"
-    prompt_input "服务端口" "8080" port
+    echo -e "${BOLD}【1. 服务端口】${NC}"
+    prompt_input "Nitter 访问端口" "8080" port
+
+    # 2. 域名 (默认 localhost，即 IP 访问)
+    local domain=""
+    echo ""
+    echo -e "${BOLD}【2. 访问域名 (可选)】${NC}"
+    echo -e "个人自用直接通过 IP 访问请直接按回车保持默认 (localhost):"
+    prompt_input "绑定域名" "localhost" domain
 
     # 3. 代理设置 (可选)
     local proxy_url=""
     echo ""
-    echo -e "${BOLD}【步骤 3】网络代理设置 (可选)${NC}"
-    echo -e "国内服务器需要配置 HTTP/SOCKS5 代理才能抓取推特 (海外服务器直接回车跳过):"
+    echo -e "${BOLD}【3. 网络代理设置 (可选)】${NC}"
+    echo -e "国内服务器需配置 HTTP/SOCKS5 代理才能抓取推特 (海外服务器直接回车跳过):"
     prompt_input "代理地址 (如 http://127.0.0.1:7890，无则留空)" "" proxy_url
 
     # 4. 小号 Token (可选)
     echo ""
-    echo -e "${BOLD}【步骤 4】Twitter 小号凭证 (可选)${NC}"
+    echo -e "${BOLD}【4. Twitter 小号凭证 (可选)】${NC}"
     local add_now="y"
     prompt_input "是否现在录入小号 Token？[Y/n]" "Y" add_now
     [[ "$add_now" =~ ^[Yy]$ ]] && interactive_add_account
@@ -299,10 +300,10 @@ install_wizard() {
     # 5. 确认清单
     echo ""
     echo -e "${CYAN}======================== [部署配置确认] ========================${NC}"
-    echo -e " 绑定的 CF 域名:  ${BOLD}https://${cf_domain}${NC}"
     echo -e " 本地监听端口:    ${BOLD}${port}${NC}"
+    echo -e " 绑定域名/模式:   ${BOLD}${domain}${NC} (默认 IP 访问模式)"
     echo -e " 基础 Docker 镜像: ${BOLD}${docker_image}${NC} (Docker Hub 官方源)"
-    echo -e " 代理设置:        ${BOLD}${proxy_url:-无 (海外直连)}${NC}"
+    echo -e " 代理设置:        ${BOLD}${proxy_url:-无 (直连)}${NC}"
     local acc_count=0
     [ -f "$SESSIONS_FILE" ] && acc_count="$(grep -c "auth_token" "$SESSIONS_FILE" 2>/dev/null || echo 0)"
     echo -e " 小号凭证数:      ${BOLD}${acc_count} 个${NC}"
@@ -317,7 +318,7 @@ install_wizard() {
     fi
 
     log_info "正在生成配置文件..."
-    render_configs "$cf_domain" "$port" "$proxy_url" "$docker_image"
+    render_configs "$domain" "$port" "$proxy_url" "$docker_image"
 
     log_info "正在启动容器服务..."
     cd "$INSTALL_DIR"
@@ -327,14 +328,14 @@ install_wizard() {
     log_success "Nitter 服务已成功启动！"
 
     echo ""
-    show_access_info "$cf_domain" "$port"
+    show_access_info "$domain" "$port"
 }
 
 get_current_domain() {
     if [ -f "$CONF_FILE" ]; then
         grep -E "^hostname = " "$CONF_FILE" | sed -E 's/hostname = "([^"]+)"/\1/' | head -n 1
     else
-        echo "未配置"
+        echo "localhost"
     fi
 }
 
@@ -349,40 +350,47 @@ get_current_port() {
 show_access_info() {
     local domain="${1:-$(get_current_domain)}"
     local port="${2:-$(get_current_port)}"
+    local host_ip
+    host_ip="$(curl -s4 ifconfig.me 2>/dev/null || curl -s4 icanhazip.com 2>/dev/null || echo "你的服务器IP")"
 
     echo -e "${GREEN}==================================================================${NC}"
-    echo -e "${BOLD}Nitter 部署完成！Cloudflare 映射指引：${NC}"
-    echo -e " 1. 域名访问地址: ${CYAN}https://${domain}${NC}"
-    echo -e " 2. RSS 订阅地址: ${CYAN}https://${domain}/Twitter/rss${NC}"
-    echo -e "------------------------------------------------------------------"
-    echo -e "【Cloudflare 映射设置 (二选一)】:"
-    echo -e " A. 若使用 CF Tunnel 穿透:"
-    echo -e "    在 Zero Trust 控制台将 Public Hostname 指向: ${BOLD}http://localhost:${port}${NC}"
-    echo -e " B. 若使用 VPS 公网 IP + CF 小黄云解析:"
-    echo -e "    在 CF 后台将 SSL/TLS 设为 ${BOLD}Full (完全)${NC}，并反代到 ${BOLD}http://127.0.0.1:${port}${NC}"
+    echo -e "${BOLD}Nitter 部署完成！${NC}"
+    if [ "$domain" != "localhost" ]; then
+        echo -e " 🌐 域名访问地址: ${CYAN}https://${domain}${NC}"
+        echo -e " 📡 RSS 订阅地址: ${CYAN}https://${domain}/Twitter/rss${NC}"
+    else
+        echo -e " 🌐 网页访问地址: ${CYAN}http://${host_ip}:${port}${NC} (本地: http://127.0.0.1:${port})"
+        echo -e " 📡 RSS 订阅地址: ${CYAN}http://${host_ip}:${port}/Twitter/rss${NC}"
+        echo -e " 🤖 机器人插件对接: 直接在插件配置中填写 ${CYAN}http://${host_ip}:${port}${NC}"
+    fi
+    echo -e " 📁 安装目录:     ${INSTALL_DIR}"
+    echo -e " ⚠️  提示: 若公网 IP 无法打开，请检查云服务器后台安全组是否放行了 ${port} 端口！"
     echo -e "${GREEN}==================================================================${NC}"
 }
 
 modify_domain() {
     clear
     echo -e "${CYAN}==================================================================${NC}"
-    echo -e "${BOLD}修改 Cloudflare 绑定域名${NC}"
+    echo -e "${BOLD}修改绑定域名 / 访问模式${NC}"
     echo -e "${CYAN}==================================================================${NC}"
     local old_domain
     old_domain="$(get_current_domain)"
-    echo -e "当前绑定域名: ${BOLD}${old_domain}${NC}\n"
+    echo -e "当前配置: ${BOLD}${old_domain}${NC} (localhost 表示纯 IP 模式)\n"
 
     local new_domain=""
-    prompt_input "请输入新的域名" "$old_domain" new_domain
+    prompt_input "请输入新域名 (恢复 IP 模式请直接输 localhost)" "$old_domain" new_domain
 
-    if [ -n "$new_domain" ] && [ "$new_domain" != "$old_domain" ]; then
+    if [ -n "$new_domain" ]; then
+        local is_https="false"
+        [ "$new_domain" != "localhost" ] && is_https="true"
         sed -i -E "s/^hostname = .*/hostname = \"${new_domain}\"/" "$CONF_FILE"
+        sed -i -E "s/^https = .*/https = ${is_https}/" "$CONF_FILE"
         local compose_cmd
         compose_cmd="$(detect_compose_cmd)"
         if [ -n "$compose_cmd" ] && [ -f "$COMPOSE_FILE" ]; then
             cd "$INSTALL_DIR" && $compose_cmd restart nitter 2>/dev/null || true
         fi
-        log_success "域名已更新为 https://${new_domain} 并已生效！"
+        log_success "配置已更新并已生效！"
     fi
     read -rp "按回车键返回..."
 }
@@ -395,8 +403,6 @@ run_health_check() {
 
     local port
     port="$(get_current_port)"
-    local domain
-    domain="$(get_current_domain)"
     local compose_cmd
     compose_cmd="$(detect_compose_cmd)"
 
@@ -513,11 +519,11 @@ main_menu() {
         [ -f "$SESSIONS_FILE" ] && acc_num="$(grep -c "auth_token" "$SESSIONS_FILE" 2>/dev/null || echo 0)"
 
         echo -e "${CYAN}==================================================================${NC}"
-        echo -e "${BOLD}               Nitter 极简管理面板 (Cloudflare 映射版)           ${NC}"
-        echo -e "   绑定域名: ${GREEN}https://${cur_domain}${NC}  |  端口: ${CYAN}${cur_port}${NC}  |  小号数: ${YELLOW}${acc_num}${NC}"
+        echo -e "${BOLD}                     Nitter 运维管理控制面板                    ${NC}"
+        echo -e "   访问模式: [${cur_domain}]  |  端口: ${CYAN}${cur_port}${NC}  |  小号数: ${YELLOW}${acc_num}${NC}"
         echo -e "${CYAN}==================================================================${NC}"
         echo -e " 1. 重新部署 / 覆盖安装 Nitter"
-        echo -e " 2. 修改绑定的 Cloudflare 域名"
+        echo -e " 2. 修改访问模式 / 绑定域名"
         echo -e " 3. 管理 Twitter 小号凭证 (查看 / 追加 / 清空)"
         echo -e " 4. 运行服务连通性自检"
         echo -e " 5. 启动 / 重启 / 停止服务"
