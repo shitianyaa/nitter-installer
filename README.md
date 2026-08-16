@@ -18,19 +18,18 @@
 
 ---
 
-## 使用步骤
+## 快速使用
 
-### 1. 赋予执行权限并运行
+### 1. 一键运行脚本
 
-在你的服务器终端执行：
+在你的 Linux 服务器终端执行以下命令：
 
 ```bash
-chmod +x nitter.sh
-./nitter.sh
+curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/nitter.sh -o nitter.sh && chmod +x nitter.sh && ./nitter.sh
 ```
 
 ### 2. 交互式输入配置
-运行后向导会依次询问：
+运行后向导会依次确认：
 1. **绑定域名**：输入你在 Cloudflare 上托管的域名（如 `nitter.yourdomain.com`）。
 2. **本地端口**：默认 `8080`（直接回车即可）。
 3. **网络代理**：国内服务器可输入 HTTP/SOCKS5 代理地址，海外服务器直接回车跳过。
@@ -38,26 +37,66 @@ chmod +x nitter.sh
 
 ---
 
-## Cloudflare 映射配置（二选一）
+## Cloudflare 域名映射配置（二选一）
 
-部署完成后，根据你的机器类型选择对应方式将 CF 域名映射过来：
+部署完成后，将你在 Cloudflare 托管的域名映射到本机的 Nitter：
 
-### 方式 A：使用 Cloudflare Zero Trust Tunnel（免开端口，无公网 IP 亦可用）
-1. 登录 Cloudflare -> 进入 **Zero Trust** -> **Networks** -> **Tunnels**。
-2. 点击 **Add a tunnel** -> 选择 **Cloudflared** -> 给隧道命名。
-3. 复制页面给出的安装命令，在你的服务器/本机终端执行一次。
-4. 在 Tunnel 的 **Public Hostname** 中添加一条规则：
-   - **Subdomain**：`nitter`
-   - **Domain**：选择你的域名
-   - **Type**：`HTTP`
-   - **URL**：`localhost:8080`
-5. 保存后即可直接通过 `https://nitter.yourdomain.com` 访问。
+### 方式 A：使用云服务器公网 IP + Cloudflare 小黄云解析（常规推荐）
+适合拥有独立公网 IP 的云服务器 / VPS：
 
-### 方式 B：使用云服务器公网 IP + Cloudflare 小黄云解析
-1. 在 Cloudflare 的 **DNS** 记录中添加一条 `A` 记录：
-   - 名称填 `nitter`，内容填你的服务器公网 IP，开启小黄云（Proxied）。
-2. 在 Cloudflare 的 **SSL/TLS** -> **Overview** 中，将加密模式设置为 **Full (完全)**。
-3. 在服务器上配置反向代理（如 Nginx / 宝塔），将请求转发至 `http://127.0.0.1:8080` 即可。
+1. **添加 DNS 解析**：
+   - 登录 Cloudflare -> 进入你的域名 -> **DNS** -> **Records**。
+   - 添加一条 `A` 记录：
+     - 名称：`nitter` (即 `nitter.yourdomain.com`)
+     - IPv4 地址：填入你的服务器公网 IP
+     - 代理状态：保持开启（**Proxied / 橙色小云朵**）
+2. **设置 SSL/TLS 加密模式 (关键)**：
+   - 进入 **SSL/TLS** -> **Overview**。
+   - 必须将加密模式设置为 **Full (完全)** 或 **Full (strict)**，避免死循环重定向。
+3. **服务器端口转发 (关于是否需要 Nginx)**：
+   - **方案 1（使用 Nginx 反代）**：在服务器上配置 Nginx 监听 80/443，将请求 `proxy_pass http://127.0.0.1:8080;`。
+   - **方案 2（完全免装 Nginx）**：在 Cloudflare 控制台左侧进入 **Rules (规则)** -> **Origin Rules (源站规则)** -> 创建规则：当主机名为 `nitter.yourdomain.com` 时，将目标端口重写为 `8080`。这样无需在服务器安装 Nginx，CF 会自动将 443 请求转至后端的 8080 端口。
+
+---
+
+### 方式 B：使用 Cloudflare Zero Trust Tunnel（完全免装 Nginx，无公网 IP 亦可用）
+适合家庭宽带、本地设备、NAS 或不想在服务器开放任何防火墙端口的场景：
+
+1. **创建 Tunnel**：
+   - 登录 Cloudflare -> 点击左侧 **Zero Trust** -> **Networks** -> **Tunnels**。
+   - 点击 **Add a tunnel** -> 选择 **Cloudflared** -> 自定义隧道名称。
+2. **在服务器安装并启动 cloudflared**：
+   - 复制页面给出的系统安装命令，在服务器终端执行一次即可完成连接。
+3. **配置域名路由**：
+   - 在 Tunnel 的 **Public Hostname** 中添加一条规则：
+     - **Subdomain**：`nitter`
+     - **Domain**：选择你的域名
+     - **Type**：`HTTP`
+     - **URL**：`localhost:8080`
+4. **访问测试**：
+   - 保存后即可直接通过 `https://nitter.yourdomain.com` 访问，**全过程不需要安装 Nginx，不需要开放任何公网端口，自带 HTTPS 证书**。
+
+---
+
+## Twitter 凭证获取与配置说明 (auth_token 与 ct0)
+
+### 为什么两者都需要？
+- **`auth_token`**：推特账号的登录 Session 身份标识。
+- **`ct0`**：推特的 CSRF 防伪造 Token（API 校验时必须与 Cookie 一并提交）。
+> Nitter 在向推特请求数据时，必须同时携带两者才能通过推特的 GraphQL / API 鉴权，**缺一不可**。
+
+### 详细获取步骤 (电脑浏览器)：
+1. **登录小号**：使用 Chrome / Edge / Firefox 等浏览器打开 `https://x.com` 并登录一个推特临时小号（切勿使用日常主力大号）。
+2. **打开控制台**：在网页任意位置按键盘 **`F12`**（或右键 -> 检查）。
+3. **定位 Cookie 页面**：
+   - **Chrome / Edge**：点击顶部标签栏的 **`Application (应用)`** -> 左侧菜单展开 **`Cookies`** -> 点击 **`https://x.com`**。
+   - **Firefox (火狐)**：点击顶部标签栏的 **`存储 (Storage)`** -> 左侧菜单展开 **`Cookies`** -> 点击 **`https://x.com`**。
+4. **复制两项关键值**：
+   - 在右侧列表中找到 **`auth_token`**，双击 Value 栏复制（约 40 位哈希字符）。
+   - 在列表中找到 **`ct0`**，双击 Value 栏复制（较长的 CSRF 字符）。
+5. **填入脚本**：
+   - 可在首次部署向导时直接粘贴；
+   - 也可以在部署完成后，随时在控制面板选择 **`[3] 管理 Twitter 小号凭证`** 进行追加。脚本会自动过滤掉可能多复制的空格或引号。
 
 ---
 
@@ -80,28 +119,6 @@ chmod +x nitter.sh
  0. 退出
 ==================================================================
 ```
-
----
-
-## Twitter 凭证获取与配置说明 (auth_token 与 ct0)
-
-### 为什么两者都需要？
-- **`auth_token`**：推特账号的登录 Session 身份标识。
-- **`ct0`**：推特的 CSRF 防伪造 Token（API 校验时必须与 Cookie 一并提交）。
-> Nitter 在向推特请求数据时，必须同时携带两者才能通过推特的 GraphQL / API 鉴权，**缺一不可**。
-
-### 详细获取步骤 (电脑浏览器)：
-1. **登录小号**：使用 Chrome / Edge / Firefox 等浏览器打开 `https://x.com`，登录一个推特临时小号（切勿使用日常主力大号）。
-2. **打开控制台**：在网页任意位置按键盘 **`F12`**（或右键 -> 检查）。
-3. **定位 Cookie 页面**：
-   - **Chrome / Edge**：点击顶部标签栏的 **`Application (应用)`** -> 左侧菜单展开 **`Cookies`** -> 点击 **`https://x.com`**。
-   - **Firefox (火狐)**：点击顶部标签栏的 **`存储 (Storage)`** -> 左侧菜单展开 **`Cookies`** -> 点击 **`https://x.com`**。
-4. **复制两项关键值**：
-   - 在右侧列表中找到 **`auth_token`**，双击 Value 栏复制（约 40 位哈希字符）。
-   - 在列表中找到 **`ct0`**，双击 Value 栏复制（较长的 CSRF 字符）。
-5. **填入脚本**：
-   - 可在首次部署向导时直接粘贴；
-   - 也可以在部署完成后，随时在控制面板选择 **`[3] 管理 Twitter 小号凭证`** 进行追加。脚本会自动过滤掉可能多复制的空格或引号。
 
 ---
 
